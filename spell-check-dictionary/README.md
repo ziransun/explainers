@@ -68,11 +68,22 @@ We propose the addition of a new `SpellCheckCustomDictionary` object accessible 
 
 
 ```
+dictionary SpellCheckCustomDictionaryEntry {
+    required DOMString word;
+    DOMString lang;
+};
+
+dictionary SpellCheckCustomDictionaryAddWordsOptions {
+    DOMString lang;
+};
+
 [
     Exposed=Window,
     SecureContext
 ] interface SpellCheckCustomDictionary {
-    undefined addWords(sequence<DOMString> words);
+    undefined addWords(
+        sequence<(DOMString or SpellCheckCustomDictionaryEntry)> words,
+        optional SpellCheckCustomDictionaryAddWordsOptions options = {});
     undefined removeWords(sequence<DOMString> words);
 };
 
@@ -89,7 +100,16 @@ document.spellCheckCustomDictionary.addWords(["Igalia", "Wolvic", "spidermonkey"
 
 document.spellCheckCustomDictionary.removeWords(["Wolvic", "spidermonkey"]);
 
+// A language may be supplied as metadata about the words themselves, either as
+// a default for the batch or per entry.
+document.spellCheckCustomDictionary.addWords(["Sarkom", "Karzinom"], { lang: "de" });
+document.spellCheckCustomDictionary.addWords([{ word: "Wolvic", lang: "en" }]);
+
 ```
+**Note:** `lang` is **metadata about the word, not a condition on the text the word matches.** A user agent may use it to perform language-specific processing of an entry — normalization, casing, stemming, affix handling — but must not use it to restrict which text that entry suppresses. Today, an entry with a `lang` exists behaves exactly as the same entry without one. The field exists so that language-sensitive matching, when it arrives (see [Future Work](#future-work)), has somewhere to read a language from. 
+
+The language is not part of an entry's identity. The word alone identifies an entry; adding a word already present records the language from the newer call — last write wins. An entry's own `lang` takes precedence over `options.lang`. `removeWords()` correspondingly removes by word alone, regardless of the language recorded, and takes no options.
+
 **Note:** On platforms whose native spellcheck APIs distinguish *ignored* from *learned* words (e.g. *NSSpellChecker.ignoreWord:inSpellDocumentWithTag:* on macOS, *UITextChecker.ignoredWords* on iOS, *mIgnoreTable* in Firefox), *learned* words are added permanently to the user's persistent dictionary, whereas *ignored* words are held only in a transient, in-memory list. This web API maps to the **ignored** semantics. Moreover, it exposes an explicit ```removeWords()``` and is *more tightly scoped* to the ```Document```.
 
 **Note:** Both ```addWords()``` and ```removeWords()``` are essential for this interface. We need ```removeWords()``` to retract mistakes, mirror user unmarks, and prevent the dictionary from growing unboundedly. For single page applications particularly, as the document is the whole session, when view switches, without ```removeWords()```, every view's vocabulary leaks into subsequent view. Unlike native ignore lists, which are effectively add-only, a page-driven, long-lived document does not get the automatic reset that native ignore lists have, so it needs an explicit removal primitive to scope vocabulary to the current view and bound growth.
@@ -197,7 +217,7 @@ We propose to proceed with document-scoped first as it's a more conservative, ea
 This API has no direct effect on the accessibility tree or assistive technology. Reducing false spell-check positives may modestly benefit users who rely on screen readers, by reducing noise from incorrectly flagged words being announced as errors.
 
 ### Internationalization
-Words added via this API apply across all user-enabled languages, matching the behavior of the existing browser custom dictionary. Sites can simply load different dictionaries as appropriate if desired. No language-targeting beyond what already exists is introduced.
+Words added via this API apply across all user-enabled languages, matching the behavior of the existing browser custom dictionary. Sites can simply load different dictionaries as appropriate if desired. No language-targeting beyond what already exists is introduced: entries may carry a `lang`, but it is metadata a user agent may use to process the entry, never a restriction on which text the entry matches (see [Proposed Approach](#proposed-approach)).
 
 ### Privacy
 
@@ -250,9 +270,7 @@ The current proposal is intentionally minimal in scope. A few directions have co
 
 * **Subtree-scoped dictionaries.** Today the dictionary is scoped to the whole `Document`. A `partial interface HTMLElement` (see [Alternatives Considered §5](#5-dom-subtree-scoped)) could let pages scope distinct vocabularies to individual forms or web components, for cases where a single page legitimately needs more than one vocabulary at once.  Note that this is neither how user dictionaries work today, nor is it currently well supported in spell-checking with regard to languages in general.  We imagine it being rather easy to adapt in terms of API by simply adding a lang as an optional secondary argument to each of the methods.
 
-* **Fuzzy matching.** Today the dictionary is based on exact matches for many reasons laid out in other sections.  This is not always the most author convenient way to express things, and, in fact does not offer real solutions for some languages.  It also means that the list is generally not integrated with spelling _suggestions_.  These are different features though, and at most would ideally share some _source_ list.  We propose that there are opportunities to identify source lists in a few possible ways ([simple partial matching](https://github.com/Igalia/explainers/issues/94), or even fuller solutions like hunspell, etc), and that we can identify these at a later time.  Exact matching should always still be possible, so let's start there.
-
-
+* **Fuzzy matching.** Today the dictionary is based on exact matches for many reasons laid out in other sections.  This is not always the most author convenient way to express things. It doesn't scales evenly across languages so a plain word list may be inadequate, as pointed by [i18n review](https://github.com/w3c/i18n-actions/issues/222).  It also means that the list is generally not integrated with spelling _suggestions_.  These are different features though, and at most would ideally share some _source_ list.  We propose that there are opportunities to identify source lists in a few possible ways ([simple partial matching](https://github.com/Igalia/explainers/issues/94), or even fuller solutions like hunspell, etc), and that we can identify these at a later time.  Exact matching should always still be possible, so let's start there.
 * **Convenience integration with related APIs.** Sharing vocabulary with the [Web Speech Contextual Biasing API](https://github.com/WebAudio/web-speech-api/blob/main/explainers/contextual-biasing.md), translation APIs, or a future [Proofreader API](https://github.com/webmachinelearning/proofreader-api) integration is possible today by passing the same word list to both APIs manually. If this pattern proves common or inefficient in practice, a convenience method to share vocabulary across APIs could be considered later.
 
 * **Resource-limit standardization.** Limits on word count and word length are currently left implementation-defined. As implementations gain experience, it may be worth revisiting whether these limits should be more tightly specified for interoperability.
@@ -278,4 +296,5 @@ None of these are required for an initial, useful version of the API, and we'd r
 * [Preventing User Dictionary Leaks via `::spelling-error` and `::grammar-error` (user-dictionary-leaks explainer)](https://explainers-by-googlers.github.io/user-dictionary-leaks/)
 * [WebKit standards-position #546 — User dictionary leaks via spelling/grammar pseudo-elements](https://github.com/WebKit/standards-positions/issues/546)
 * [CSS Pseudo-Elements — Highlight Security](https://drafts.csswg.org/css-pseudo/#highlight-security)
+* [i18n review](https://github.com/w3c/i18n-actions/issues/222)
 - Many thanks for valuable feedback and advice from reviews and collaborators across standards groups.
